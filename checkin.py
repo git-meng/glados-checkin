@@ -55,7 +55,7 @@ def extract_cookie(raw: str):
     # JSON
     if raw.startswith('{'):
         try:
-            return 'koa.sess=' + json.loads(raw).get('token')
+            return 'koa:sess=' + json.loads(raw).get('token')
         except: pass
         
     # JWT Token
@@ -90,7 +90,7 @@ class GLaDOS:
         
     def req(self, method, path, data=None):
         """带自动域名切换的请求"""
-        for d in DOMAINS:
+        for d in dict.fromkeys([self.domain] + DOMAINS):
             try:
                 url = f"{d}{path}"
                 h = HEADERS.copy()
@@ -101,11 +101,19 @@ class GLaDOS:
                 if method == 'GET':
                     resp = requests.get(url, headers=h, timeout=10)
                 else:
-                    resp = requests.post(url, headers=h, json=data, timeout=10)
+                    body = dict(data or {})
+                    if path == '/api/user/checkin':
+                        body['token'] = d.removeprefix('https://')
+                    resp = requests.post(url, headers=h, json=body, timeout=10)
                 
                 if resp.status_code == 200:
-                    self.domain = d # Remember working domain
-                    return resp.json()
+                    payload = resp.json()
+                    if isinstance(payload, dict):
+                        if payload.get('code') == -2 or '没有权限' in str(payload.get('message', '')):
+                            log(f'⚠️ {d} 认证失败，尝试其他域名')
+                            continue
+                        self.domain = d
+                        return payload
             except Exception as e:
                 log(f"⚠️ {d} 请求失败: {e}")
                 continue
@@ -114,7 +122,7 @@ class GLaDOS:
     def get_status(self):
         """获取状态：天数、邮箱"""
         res = self.req('GET', '/api/user/status')
-        if res and 'data' in res:
+        if res and isinstance(res.get('data'), dict):
             d = res['data']
             self.email = d.get('email', 'Unknown')
             self.left_days = str(d.get('leftDays', '?')).split('.')[0]
@@ -187,10 +195,11 @@ def main():
         g.get_points()
         
         # 3. Log
-        status_icon = "✅" if "Checkin" in msg else "⚠️"
+        success = isinstance(msg, str) and (msg.startswith('Checkin! Got ') or msg == "Today's observation logged. Return tomorrow for more points.")
+        log('✅ 签到成功' if success else '❌ 签到失败')
         log(f"用户: {g.email} | 积分: {g.points} | 天数: {g.left_days} | 结果: {msg}")
         
-        if "Checkin" in msg: success_cnt += 1
+        if success: success_cnt += 1
         
         # 4. Result Formatting
         results.append(f"""
@@ -220,6 +229,9 @@ def main():
         content = "".join(results)
         content += f"<br><small>时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small>"
         pushplus(ptoken, title, content)
+
+    if success_cnt != len(cookies):
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()
