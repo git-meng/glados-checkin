@@ -31,14 +31,20 @@ jobs:
       - name: Run Checkin
         id: checkin
         continue-on-error: true
-        run: python checkin.py
+        run: |
+          status=0
+          python checkin.py || status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "requires_browser=true" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
         timeout-minutes: 5
         env:
           GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
 
       - name: Retry on Failure
-        if: steps.checkin.outcome == 'failure'
+        if: steps.checkin.outcome == 'failure' && steps.checkin.outputs.requires_browser != 'true'
         run: |
           echo "First attempt failed, retrying in 60s..."
           sleep 60
@@ -47,3 +53,9 @@ jobs:
         env:
           GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+
+      - name: Report Required Browser Verification
+        if: steps.checkin.outputs.requires_browser == 'true'
+        run: |
+          echo "::error::GLaDOS rejected the check-in at Cloudflare verification. Check today's points history on the official website."
+          exit 1

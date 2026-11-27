@@ -37,6 +37,15 @@ HEADERS = {
     'Accept': 'application/json, text/plain, */*',
 }
 
+BROWSER_VERIFICATION_REQUIRED = 2
+CHECKIN_PAGE = 'https://glados.cloud/console/checkin'
+
+
+def requires_browser_verification(message):
+    return isinstance(message, str) and message.strip().lower().startswith(
+        'cloudflare verification failed'
+    )
+
 # ================= 工具函数 =================
 
 def log(msg):
@@ -182,6 +191,7 @@ def main():
     
     results = []
     success_cnt = 0
+    browser_verification_required = False
     
     for i, cookie in enumerate(cookies, 1):
         g = GLaDOS(cookie)
@@ -189,6 +199,9 @@ def main():
         # 1. Checkin
         res = g.checkin()
         msg = res.get('message', 'Failure') if res else "Network Error"
+        if requires_browser_verification(msg):
+            browser_verification_required = True
+            msg = f'Cloudflare 验证失败，请前往 GLaDOS 官网确认并完成签到：{CHECKIN_PAGE}'
         
         # 2. Get Info (Refresh data)
         g.get_status()
@@ -229,6 +242,17 @@ def main():
         content = "".join(results)
         content += f"<br><small>时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small>"
         pushplus(ptoken, title, content)
+
+    if browser_verification_required:
+        summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
+        if summary_path:
+            with open(summary_path, 'a', encoding='utf-8') as summary:
+                summary.write(
+                    '## GLaDOS 签到需要浏览器验证\n\n'
+                    'GLaDOS 拒绝了本次自动签到。请到官网查看当天的积分明细，'
+                    f'如当天尚未签到，请在[官网签到页]({CHECKIN_PAGE})完成。\n'
+                )
+        sys.exit(BROWSER_VERIFICATION_REQUIRED)
 
     if success_cnt != len(cookies):
         sys.exit(1)
